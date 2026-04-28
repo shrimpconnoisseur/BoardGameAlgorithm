@@ -1,4 +1,4 @@
 # Board Game Algorithm
-Algorithms for Dots and Boxes and Tic-Tac-Toe
+Algorithm for Tic-Tac-Toe.
 
-What are we finding? Good question.
+Given a board size of `n`, we are attempting to find the best performing algorithm measuring its win rate and maybe also how it determines the "best possible move".
