@@ -124,6 +124,8 @@ class Minimax:
     
     self.log("sys", f"Minimax search started (MAX={self.MAX})")
     moves = board.available_moves()
+    if not moves:
+      return None
     self.log("sys", f"Available moves: {moves}")
     
     for move in moves:
@@ -356,6 +358,153 @@ class TicTacToeGame:
           self.canvas.create_text(cx, cy, text=mark, font=FONT_MARK, fill=clr)
   
   # actually logging messages here ok
+  def _log(self, tag, msg):
+    self.log_text.config(state="normal")
+    self.log_text.insert("end", msg + "\n", tag)
+    self.log_text.see("end")
+    self.log_text.config(state="disabled")
+    
+  def _clear_log(self):
+    self.log_text.config(state="normal")
+    self.log_text.delete("1.0", "end")
+    self.log_text.config(state="disabled")
+    
+  # game status logs
+  def _update_status(self, msg=None):
+    if msg:
+      self.label_status.config(text=msg)
+      return
+    if self.game_over:
+      return
+    p = self.current
+    clr = X_COLOR if p == Board.X else O_COLOR
+    if self.mode == "AvA":
+      txt = f"Next: {p}   (AI is thinking...)"
+    elif p == self.human:
+      txt = f"Your turn   ({p})"
+    else:
+      txt = f"AI is thinking...   ({p})"
+    self.label_status.config(text=txt, fg=clr)
+    
+  def _update_score_labels(self):
+    self.label_score_x.config(text=f"X  {self.scores[Board.X]}")
+    self.label_score_o.config(text=f"O  {self.scores[Board.O]}")
+    self.label_score_draw.config(text=f"Draw  {self.scores['draw']}")
+    
+  # input handling
+  def _cell_from_event(self, event):
+    c = event.x // CELL_PX
+    r = event.y // CELL_PX
+    n = self.board.size
+    if 0 <= r < n and 0 <= c < n:
+      return r, c
+    return None
+  
+  def _on_hover(self, event):
+    cell = self._cell_from_event(event)
+    if cell != self._hover_cell:
+      self._hover_cell = cell
+      self._draw_board()
+      
+  def _clear_hover(self):
+    self._hover_cell = None
+    self._draw_board()
+    
+  def _on_click(self, event):
+    if self.game_over:
+      return
+    if self.mode == "AvA":
+      return
+    if self.current != self.human:
+      return
+    cell = self._cell_from_event(event)
+    if cell is None:
+      return
+    r, c = cell
+    if self.board.cells[r][c] != Board.EMPTY:
+      return
+    self._apply_move(r, c, self.human)
+    
+  # player move
+  def _apply_move(self, row, col, player):
+    self.board.make_move(row, col, player)
+    self._draw_board()
+    
+    winner, win_line = self.board.check_winner()
+    if winner:
+      self.win_cells = win_line
+      self._draw_board()
+      self.game_over = True
+      if winner == "draw":
+        self.scores["draw"] += 1
+        msg = "DRAW"
+        self._log("dim", f"\nDRAW")
+      else:
+        self.scores[winner] += 1
+        label = "Human" if (self.mode == "HvA" and winner == self.human) else "AI"
+        if self.mode == "AvA":
+          label = f"AI ({winner})"
+        msg = f"{label} wins!"
+        tag = "x_win" if winner == Board.X else "o_win"
+        self._log(tag, f"\n{winner}")
+      self._update_status(msg)
+      self._update_score_labels()
+      return
+    
+    # switch and continue
+    self.current = Board.O if player == Board.X else Board.X
+    self._update_status()
+    
+    # trigger AI move if needed
+    if not self.game_over:
+      if self.mode == "AvA":
+        self._ai_job = self.root.after(ALT_AI_MOVE_DELAY, self._ai_turn)
+      elif self.current != self.human:
+        self._ai_job = self.root.after(AI_MOVE_DELAY, self._ai_turn)
+        
+  # ai move
+  def _ai_turn(self):
+    if self.game_over:
+      return
+    ai = self.current
+    opp = Board.O if ai == Board.X else Board.X
+    engine = Minimax(ai, opp, log_callback=self._log)
+    
+    # guard against: no moves available
+    # this shouldn't happen, but still prevents crashes
+    if not self.board.available_moves():
+      return
+    
+    r, c = engine.best_move(self.board)
+    self._apply_move(r, c, ai)
+    
+  # game management
+  def _new_game(self):
+    if self._ai_job:
+      self.root.after_cancel(self._ai_job)
+      self._ai_job = None
+    self.board = Board()
+    self.current = Board.X
+    self.game_over = False
+    self.win_cells = []
+    self._hover_cell = None
+    self._draw_board()
+    self._log("sys", "\nNew Game Started")
+    self._update_status()
+    
+    # if ai goes first in AvA or AI is X in HvA
+    if self.mode == "AvA":
+      self._ai_job = self.root.after(ALT_AI_MOVE_DELAY, self._ai_turn)
+    elif self.mode == "HvA" and self.current != self.human:
+      self._ai_job = self.root.after(AI_MOVE_DELAY, self._ai_turn)
+  
+  def _reset_scores(self):
+    self.scores = {Board.X: 0, Board.O: 0, "draw": 0}
+    self._update_score_labels()
+    
+  def _on_mode_change(self):
+    self.mode = self.mode_var.get()
+    self._new_game()
     
 # startup
 def main():
