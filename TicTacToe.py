@@ -85,7 +85,7 @@ class Board:
         return marks[0], line
     
     if self.move_count == size * size:
-      return "Draw", []
+      return "draw", []
     return None, []
   
   def _all_lines(self):
@@ -124,7 +124,7 @@ class Minimax:
     
     self.log("sys", f"Minimax search started (MAX={self.MAX})")
     moves = board.available_moves()
-    if not moves:
+    if not moves: # guard
       return None
     self.log("sys", f"Available moves: {moves}")
     
@@ -475,7 +475,11 @@ class TicTacToeGame:
     if not self.board.available_moves():
       return
     
-    r, c = engine.best_move(self.board)
+    # python was complaining because `engine.best_move(self.board)` CAN return None, even though it shouldn't.
+    move = engine.best_move(self.board)
+    if move is None:  # similar guard in best_move
+      return          
+    r, c = move
     self._apply_move(r, c, ai)
     
   # game management
