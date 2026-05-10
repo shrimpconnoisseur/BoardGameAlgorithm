@@ -1,4 +1,4 @@
 # Board Game Algorithm
 Algorithm for Tic-Tac-Toe.
 
-Given a board size of `n`, we are attempting to find the best performing algorithm measuring its win rate and maybe also how it determines the "best possible move".
+There's an EXE file if you don't feel like looking at the script or don't have an IDE. These guys who whine about "JUST MAKE A SIMPLE DOWNLOAD BUTTON I DON'T WANT TO SEE YOUR NERD STUFF" better be thanking me for this. There are more people like this than you think.
