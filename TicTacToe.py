@@ -122,27 +122,34 @@ class Minimax:
     best_cell = None
     alpha, beta = -math.inf, math.inf
     
-    self.log("sys", f"Minimax search started (MAX={self.MAX})")
     moves = board.available_moves()
-    if not moves: # guard
+    if not moves:
       return None
-    self.log("sys", f"Available moves: {moves}")
+
+    # Log available moves once, up front
+    self.log("sys", f"MAX={self.MAX}   available moves: {moves}")
     
+    move_scores = []
     for move in moves:
       board.make_move(*move, self.MAX)
       score = self._minimax(board, depth=1, is_max=False, alpha=alpha, beta=beta)
       board.undo_move(*move)
-      
-      self.log("eval", f"Move {move} -> score {score:+d}")
+      move_scores.append((move, score))
       
       if score > best_score:
         best_score = score
         best_cell = move
       alpha = max(alpha, best_score)
-      
+
+    # Log per-move scores in a single compact block
+    for move, score in move_scores:
+      marker = " <-- best" if move == best_cell else ""
+      self.log("eval", f"  {move} -> {score:+d}{marker}")
+
+    # Log the summary line
     self.log("good", 
-             f"Best Move: {best_cell}   score={best_score:+d} "
-             f"nodes={self.nodes_evaluated}   pruned={self.prune_count}")
+             f"Best: {best_cell}  score={best_score:+d}  "
+             f"nodes={self.nodes_evaluated}  pruned={self.prune_count}")
     return best_cell
   
   def _minimax(self, board, depth, is_max, alpha, beta):
@@ -150,15 +157,10 @@ class Minimax:
     winner, _ = board.check_winner()
     
     if winner == self.MAX:
-      s = 10 - depth
-      self.log("x_win", f"{'  '*depth}Terminal MAX win -> {s:+d}")
-      return s
+      return 10 - depth
     if winner == self.MIN:
-      s = depth - 10
-      self.log("o_win", f"{'  '*depth}Terminal MIN win -> {s:+d}")
-      return s
+      return depth - 10
     if winner == "draw":
-      self.log("dim", f"{'  '*depth}Terminal draw -> 0")
       return 0
     
     moves = board.available_moves()
@@ -173,7 +175,6 @@ class Minimax:
         alpha = max(alpha, best)
         if beta <= alpha:
           self.prune_count += 1
-          self.log("prune", f"{'  '*depth} Pruned at {move} (alpha={alpha} >= beta={beta})")
           break
       return best
     else:
@@ -186,7 +187,6 @@ class Minimax:
         beta = min(beta, best)
         if beta <= alpha:
           self.prune_count += 1
-          self.log("prune", f"{'  '*depth} Pruned at {move} (alpha={alpha} >= beta={beta})")
           break
       return best
     
@@ -446,7 +446,7 @@ class TicTacToeGame:
           label = f"AI ({winner})"
         msg = f"{label} wins!"
         tag = "x_win" if winner == Board.X else "o_win"
-        self._log(tag, f"\n{winner}")
+        self._log(tag, f"\n{winner} wins!")
       self._update_status(msg)
       self._update_score_labels()
       return
