@@ -6,6 +6,8 @@ import time
 # constants
 BOARD_SIZE = 3
 WIN_CONDITION = 3
+# these should only be changed between 3 and 10
+# IT IS VERY IMPORTANT THAT THEY ARE THE SAME VALUE
 
 CELL_PX = 130
 PAD = 18
