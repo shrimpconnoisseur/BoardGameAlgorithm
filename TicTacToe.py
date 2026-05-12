@@ -10,6 +10,23 @@ WIN_CONDITION = 3
 CELL_PX = 130
 PAD = 18
 
+MAX_BOARD_SIZE = 10
+MIN_BOARD_SIZE = 3
+
+SEARCH_DEPTH_BY_SIZE = {
+  3: None,  # full minimax
+  4: 8,
+  5: 6,
+  10: 4,
+}
+
+NEIGHBOR_RADIUS_BY_SIZE = {
+  3: 2,
+  4: 2,
+  5: 2,
+  10: 1,
+}
+
 # hex
 BG_COLOR = "#0f0f14"
 PANEL_COLOR = "#16161f"
@@ -48,10 +65,15 @@ class Board:
   O = "O"
   
   def __init__(self, size=BOARD_SIZE, win_condition=WIN_CONDITION):
+    if not MIN_BOARD_SIZE <= size <= MAX_BOARD_SIZE:
+      raise ValueError(f"BOARD_SIZE must be between {MIN_BOARD_SIZE} and {MAX_BOARD_SIZE}")
+    if not 3 <= win_condition <= size:
+      raise ValueError("WIN_CONDITION must be at least 3 and no larger than BOARD_SIZE")
     self.size = size
     self.win_condition = win_condition
     self.cells = [[self.EMPTY] * size for _ in range(size)]
     self.move_count = 0
+    self._lines = self._build_lines()
     
   def copy(self):
     b = Board(self.size, self.win_condition)
@@ -78,8 +100,7 @@ class Board:
     
   def check_winner(self):
     size, win = self.size, self.win_condition
-    lines = self._all_lines()
-    for line in lines:
+    for line in self._lines:
       marks = [self.cells[r][c] for r, c in line]
       if marks[0] != self.EMPTY and all(m == marks[0] for m in marks):
         return marks[0], line
@@ -88,7 +109,7 @@ class Board:
       return "draw", []
     return None, []
   
-  def _all_lines(self):
+  def _build_lines(self):
     size, win = self.size, self.win_condition
     lines = []
     for r in range(size):
@@ -105,6 +126,12 @@ class Board:
         lines.append([(r+i, c+win-1-i) for i in range(win)])
         
     return lines
+
+  def line_windows(self):
+    return self._lines
+
+  def state_key(self):
+    return tuple(tuple(row) for row in self.cells)
   
 # minimax with alpha-beta pruning
 class Minimax:
@@ -114,20 +141,27 @@ class Minimax:
     self.log = log_callback or (lambda *a, **k: None)
     self.nodes_evaluated = 0
     self.prune_count = 0
+    self.cache_hits = 0
+    self.cache = {}
+    self.max_depth = None
     
   def best_move(self, board):
     self.nodes_evaluated = 0
     self.prune_count = 0
+    self.cache_hits = 0
+    self.cache = {}
+    self.max_depth = SEARCH_DEPTH_BY_SIZE.get(board.size, 4)
     best_score = -math.inf
     best_cell = None
     alpha, beta = -math.inf, math.inf
     
-    moves = board.available_moves()
+    moves = self._ordered_moves(board, self.MAX)
     if not moves:
       return None
 
     # Log available moves once, up front
-    self.log("sys", f"MAX={self.MAX}   available moves: {moves}")
+    depth_text = "full" if self.max_depth is None else str(self.max_depth)
+    self.log("sys", f"MAX={self.MAX}   depth={depth_text}   candidate moves: {moves}")
     
     move_scores = []
     for move in moves:
@@ -149,7 +183,8 @@ class Minimax:
     # Log the summary line
     self.log("good", 
              f"Best: {best_cell}  score={best_score:+d}  "
-             f"nodes={self.nodes_evaluated}  pruned={self.prune_count}")
+             f"nodes={self.nodes_evaluated}  pruned={self.prune_count}  "
+             f"cache={self.cache_hits}")
     return best_cell
   
   def _minimax(self, board, depth, is_max, alpha, beta):
@@ -157,13 +192,22 @@ class Minimax:
     winner, _ = board.check_winner()
     
     if winner == self.MAX:
-      return 10 - depth
+      return 1_000_000 - depth
     if winner == self.MIN:
-      return depth - 10
+      return depth - 1_000_000
     if winner == "draw":
       return 0
+
+    if self.max_depth is not None and depth >= self.max_depth:
+      return self._evaluate(board)
+
+    key = (board.state_key(), is_max, depth)
+    if key in self.cache:
+      self.cache_hits += 1
+      return self.cache[key]
     
-    moves = board.available_moves()
+    player = self.MAX if is_max else self.MIN
+    moves = self._ordered_moves(board, player)
     
     if is_max:
       best = -math.inf
@@ -176,6 +220,7 @@ class Minimax:
         if beta <= alpha:
           self.prune_count += 1
           break
+      self.cache[key] = best
       return best
     else:
       best = math.inf
@@ -188,7 +233,97 @@ class Minimax:
         if beta <= alpha:
           self.prune_count += 1
           break
+      self.cache[key] = best
       return best
+
+  def _candidate_moves(self, board):
+    moves = board.available_moves()
+    if board.move_count == 0:
+      mid = board.size // 2
+      centers = [(mid, mid)]
+      if board.size % 2 == 0:
+        centers = [(mid - 1, mid - 1), (mid - 1, mid), (mid, mid - 1), (mid, mid)]
+      return [move for move in centers if move in moves]
+
+    if board.size <= 5:
+      return moves
+
+    radius = NEIGHBOR_RADIUS_BY_SIZE.get(board.size, 1)
+    candidates = set()
+    for r in range(board.size):
+      for c in range(board.size):
+        if board.cells[r][c] == Board.EMPTY:
+          continue
+        for dr in range(-radius, radius + 1):
+          for dc in range(-radius, radius + 1):
+            nr, nc = r + dr, c + dc
+            if 0 <= nr < board.size and 0 <= nc < board.size:
+              if board.cells[nr][nc] == Board.EMPTY:
+                candidates.add((nr, nc))
+    return list(candidates) if candidates else moves
+
+  def _ordered_moves(self, board, player):
+    moves = self._candidate_moves(board)
+    opponent = self.MIN if player == self.MAX else self.MAX
+    center = (board.size - 1) / 2
+
+    def move_score(move):
+      r, c = move
+      board.make_move(r, c, player)
+      winner, _ = board.check_winner()
+      board.undo_move(r, c)
+      if winner == player:
+        return 10_000_000
+
+      board.make_move(r, c, opponent)
+      opponent_winner, _ = board.check_winner()
+      board.undo_move(r, c)
+      if opponent_winner == opponent:
+        return 9_000_000
+
+      distance = abs(r - center) + abs(c - center)
+      return self._move_potential(board, r, c, player) - int(distance * 10)
+
+    return sorted(moves, key=move_score, reverse=True)
+
+  def _move_potential(self, board, row, col, player):
+    opponent = self.MIN if player == self.MAX else self.MAX
+    score = 0
+    for line in board.line_windows():
+      if (row, col) not in line:
+        continue
+      marks = [board.cells[r][c] for r, c in line]
+      if opponent not in marks:
+        score += 10 ** marks.count(player)
+      if player not in marks:
+        score += 8 ** marks.count(opponent)
+    return score
+
+  def _evaluate(self, board):
+    total = 0
+    for line in board.line_windows():
+      marks = [board.cells[r][c] for r, c in line]
+      max_count = marks.count(self.MAX)
+      min_count = marks.count(self.MIN)
+
+      if max_count and min_count:
+        continue
+      if max_count:
+        total += self._line_score(max_count, board.win_condition)
+      elif min_count:
+        total -= self._line_score(min_count, board.win_condition)
+      else:
+        total += 1
+    return total
+
+  def _line_score(self, count, win):
+    if count >= win:
+      return 1_000_000
+    if count == win - 1:
+      return 50_000
+    if count == win - 2:
+      return 2_500
+    return 10 ** count
     
 # gui (game graphics)
 class TicTacToeGame:
@@ -208,9 +343,22 @@ class TicTacToeGame:
     self.win_cells = []
     self.scores = {Board.X: 0, Board.O: 0, "draw": 0}
     self._ai_job = None # same bro
+    self.cell_px = self._cell_size()
+    self.mark_font = self._mark_font()
     
     self._build_ui()
     self._update_status()
+
+  def _cell_size(self):
+    if self.board.size <= 3:
+      return 130
+    if self.board.size <= 5:
+      return 90
+    return 48
+
+  def _mark_font(self):
+    size = max(18, int(self.cell_px * 0.42))
+    return ("Courier New", size, "bold")
     
   # layout
   def _build_ui(self):
@@ -218,7 +366,7 @@ class TicTacToeGame:
     top = tk.Frame(self.root, bg=BG_COLOR)
     top.pack(fill="x", padx=PAD, pady=(PAD, 0))
     
-    tk.Label(top, text="TIC-TAC-TOE", font=FONT_TITLE,
+    tk.Label(top, text=f"TIC-TAC-TOE {BOARD_SIZE}x{BOARD_SIZE}", font=FONT_TITLE,
              bg=BG_COLOR, fg=ACCENT_COLOR).pack(side="left")
     
     # mode toggle
@@ -252,7 +400,7 @@ class TicTacToeGame:
     main.pack(padx=PAD, pady=PAD)
     
     # board
-    board_px = BOARD_SIZE * CELL_PX
+    board_px = self.board.size * self.cell_px
     self.canvas = tk.Canvas(main, width=board_px, height=board_px, bg=PANEL_COLOR, highlightthickness=0)
     
     self.canvas.pack(side="left")
@@ -325,7 +473,7 @@ class TicTacToeGame:
   def _draw_board(self):
     self.canvas.delete("all")
     n = self.board.size
-    px = CELL_PX
+    px = self.cell_px
     
     # grid lines
     for i in range(1, n):
@@ -347,7 +495,7 @@ class TicTacToeGame:
         c*px+2, r*px+2, (c+1)*px-2, (r+1)*px-2, fill=WIN_CELL_COLOR, outline=""
       )
       
-    # marks (are you sure)
+    # marks
     for r in range(n):
       for c in range(n):
         mark = self.board.cells[r][c]
@@ -355,7 +503,7 @@ class TicTacToeGame:
           cx = c*px + px//2
           cy = r*px + px//2
           clr = X_COLOR if mark == Board.X else O_COLOR
-          self.canvas.create_text(cx, cy, text=mark, font=FONT_MARK, fill=clr)
+          self.canvas.create_text(cx, cy, text=mark, font=self.mark_font, fill=clr)
   
   # actually logging messages here ok
   def _log(self, tag, msg):
@@ -393,8 +541,8 @@ class TicTacToeGame:
     
   # input handling
   def _cell_from_event(self, event):
-    c = event.x // CELL_PX
-    r = event.y // CELL_PX
+    c = event.x // self.cell_px
+    r = event.y // self.cell_px
     n = self.board.size
     if 0 <= r < n and 0 <= c < n:
       return r, c
